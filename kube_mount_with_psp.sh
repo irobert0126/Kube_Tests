@@ -95,8 +95,9 @@ spec:
 EOF
 
 echo "Create a Symbolic link {/vol/sym} (links to {/etc})"
-kubectl-user exec -it vuln-container1 /bin/sh
-ln -s /etc /vol/sym
+kubectl-user exec -it vuln-container1 ls
+kubectl-user exec vuln-container1 -i -t -- ln -s /etc /vol/sym
+kubectl-user exec -it vuln-container1 ls vol
 
 echo "  "
 echo "Create Pod {vuln-container2} (with Volumn mount using [subpath] {/sym} to {/vol/} in Pod)"
