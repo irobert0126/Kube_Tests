@@ -3,10 +3,12 @@ echo "SETUP KUBE NAMESPACE, SA, ROLE, RBAC"
 kubectl create namespace psp-example
 kubectl create serviceaccount -n psp-example fake-user
 kubectl create rolebinding -n psp-example fake-editor --clusterrole=edit --serviceaccount=psp-example:fake-user
-alias kubectl-admin='kubectl -n psp-example'
-alias kubectl-user='kubectl --as=system:serviceaccount:psp-example:fake-user -n psp-example'
+kubectl_admin="kubectl -n psp-example"
+kubectl_user='kubectl --as=system:serviceaccount:psp-example:fake-user -n psp-example'
+sudo rm -r /tmp/test/
+sleep 5
 
-cat <<EOF | kubectl-admin create -f -
+cat <<EOF |${kubectl_admin} create -f -
 apiVersion: extensions/v1beta1
 kind: PodSecurityPolicy
 metadata:
@@ -27,7 +29,7 @@ spec:
   - pathPrefix: "/tmp"
 EOF
 
-kubectl-user create -f- <<EOF
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -38,21 +40,21 @@ spec:
       image: k8s.gcr.io/pause
 EOF
 echo "SHOULD FAIL: NO PSP IN KUBE"
-kubectl-user auth can-i use podsecuritypolicy/example
+${kubectl_user} auth can-i use podsecuritypolicy/example
 
 echo "  "
 echo "Create RoleBinding serviceaccount=psp-example:fake-user --> use podsecuritypolicy example"
-kubectl-admin create role psp:unprivileged \
+${kubectl_admin} create role psp:unprivileged \
     --verb=use \
     --resource=podsecuritypolicy \
     --resource-name=example
-kubectl-admin create rolebinding fake-user:psp:unprivileged \
+${kubectl_admin} create rolebinding fake-user:psp:unprivileged \
     --role=psp:unprivileged \
     --serviceaccount=psp-example:fake-user
     
 echo "  "
 echo "TEST PSP: SHOULD BE DENIED. -- Create a Pod with Volumn mount from host path /etc"
-cat <<EOF | kubectl-user create -f -
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -74,7 +76,7 @@ EOF
 
 echo "  "
 echo "Create Pod {vuln-container1} (with Volumn mount from host path {/tmp/test/} to {/vol/} in Pod)"
-cat <<EOF | kubectl-user create -f -
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -94,15 +96,17 @@ spec:
       path: /tmp/test
 EOF
 
+until ${kubectl_user} -n psp-example get pod vuln-container1 | grep -m 1 "Running"; do sleep 1 ; done
+
 echo "Create a Symbolic link {/vol/sym} (links to {/etc})"
-kubectl-user exec -it vuln-container1 ls
-kubectl-user exec vuln-container1 -i -t -- ln -s /etc /vol/sym
-kubectl-user exec -it vuln-container1 ls vol
+${kubectl_user} exec -it vuln-container1 ls
+${kubectl_user} exec vuln-container1 -i -t -- ln -s /etc /vol/sym
+${kubectl_user} exec -it vuln-container1 ls vol
 
 echo "  "
 echo "Create Pod {vuln-container2} (with Volumn mount using [subpath] {/sym} to {/vol/} in Pod)"
 echo "!! should be fail due to the CVE fix !!"
-cat <<EOF | kubectl-user create -f -
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -123,9 +127,13 @@ spec:
        path: /tmp/test
 EOF
 
+echo " "
+echo "Create a file named {zzzzzz} in host's /etc folder ..."
+sudo touch /etc/zzzzzz
+
 echo "  "
 echo "Create Pod {vuln-container3} (with Volumn mount from {/tmp/test/sym} to {/vol/} in Pod)"
-cat <<EOF | kubectl-user create -f -
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -144,13 +152,15 @@ spec:
     hostPath:
       path: /tmp/test/sym
 EOF
+until ${kubectl_user} -n psp-example get pod vuln-container3 | grep -m 1 "Running"; do sleep 1 ; done
 
 echo " --> Check whether host's {/etc} folder is mount to {/vol} folder in the pod"
-kubectl exec -it vuln-container3 ls vol
+
+${kubectl_user} exec -it vuln-container3 ls vol
 
 echo "  "
 echo "Directly Mount host's {/etc} folder to {/vol} folder in the pod --> Should Fail Due to PodSecurityPolicy"
-cat <<EOF | kubectl-user create -f -
+${kubectl_user} create -f- <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
